@@ -24,7 +24,7 @@ def init():
 def enable_redis_cache(cache, path):
     global redis_conn, cache_prefix
     if not cache or not cache.host:
-        logger.warn('Cache storage disabled!')
+        logger.info('Cache not enabled.')
         return
 
     logger.info('Enabling storage cache on Redis')
@@ -42,7 +42,7 @@ def enable_redis_cache(cache, path):
 
 def enable_redis_lru(cache, path):
     if not cache or not cache.host:
-        logger.warn('LRU cache disabled!')
+        logger.info('LRU cache not enabled.')
         return
     logger.info('Enabling lru cache on Redis')
     logger.info(

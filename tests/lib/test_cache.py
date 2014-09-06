@@ -19,7 +19,7 @@ class TestCache(TestCase):
         self.assertEqual(cache.redis_conn, None)
         self.assertEqual(cache.cache_prefix, None)
         cache.enable_redis_cache(None, None)
-        self.assertEqual(logger.warn.call_count, 1)
+        self.assertEqual(logger.info.call_count, 1)
 
         cache.enable_redis_cache(self.cache, None)
         self.assertTrue(cache.redis_conn is not None)
@@ -34,10 +34,10 @@ class TestCache(TestCase):
     @mock.patch.object(cache.lru, 'init')
     def test_enable_redis_lru(self, lru_init, logger):
         cache.enable_redis_lru(None, None)
-        self.assertEqual(logger.warn.call_count, 1)
+        self.assertEqual(logger.info.call_count, 1)
 
         cache.enable_redis_lru(self.cache, None)
-        self.assertEqual(logger.info.call_count, 2)
+        self.assertEqual(logger.info.call_count, 3)
         lru_init.assert_called_once_with(
             host=self.cache.host, port=self.cache.port, db=self.cache.db,
             password=self.cache.password, path='/')
