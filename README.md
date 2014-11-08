@@ -6,17 +6,37 @@ Docker-Registry
 About this document
 ===================
 
-As the documentation evolves with different registry versions, be sure that before reading any further you do:
+As the documentation evolves with different registry versions, be sure that before reading any further you:
 
  * check which version of the registry you are running
  * switch to the corresponding tag to access the README that matches your product version
 
-The stable, released version is the [0.8.1 tag](https://github.com/docker/docker-registry/tree/0.8.1).
+The stable, released version is the [0.9.0 tag](https://github.com/docker/docker-registry/tree/0.9.0).
 
 Please also have a quick look at the [FAQ](FAQ.md) before reporting bugs.
 
-Quick start
-===========
+# Table of Contents
+- [Quick Start](#quick-start)
+- [Configuration mechanism overview](#configuration-mechanism-overview)
+- [Configuration flavors](#configuration-flavors)
+  - [Example config](#example-config)
+- [Available configuration options](#available-configuration-options)
+  - [General options](#general-options)
+    - [Authentication options](#authentication-options)
+    - [Search-engine options](#Search-engine-options)
+      - [sqlalchemy](#sqlalchemy)
+    - [Mirroring Options](#mirroring-options)
+    - [Cache options](#cache-options)
+    - [Storage options](#storage-options)
+      - [storage file](#storage-file)
+        - [Persistent storage](#persistent-storage)
+      - [storage s3](#storage-s3)
+- [Your own config](#your-own-config)
+- [Advanced use](#advanced-user)
+- [Drivers](#drivers)
+- [For developers](#for-developers)
+
+# Quick start
 
 The fastest way to get running:
 
@@ -34,14 +54,12 @@ docker run \
          -e STORAGE_PATH=/registry \
          -e AWS_KEY=myawskey \
          -e AWS_SECRET=myawssecret \
-         -e SEARCH_BACKEND=sqlalchemy \
          -p 5000:5000 \
          registry
 ```
 
 
-Configuration mechanism overview
-================================
+# Configuration mechanism overview
 
 By default, the registry will use the [config_sample.yml](config/config_sample.yml) configuration to start.
 
@@ -52,8 +70,7 @@ You may also use different "flavors" from that file (see below).
 Finally, you can use your own configuration file (see below).
 
 
-Configuration flavors
-=====================
+# Configuration flavors
 
 The registry can be instructed to use a specific flavor from a configuration file.
 
@@ -65,6 +82,7 @@ In the `config_sample.yml` file, you'll see several sample flavors:
 1. `local`: stores data on the local filesystem
 1. `s3`: stores data in an AWS S3 bucket
 1. `ceph-s3`: stores data in a Ceph cluster via a Ceph Object Gateway, using the S3 API
+1. `azureblob`: stores data in an Microsoft Azure Blob Storage ([(docs)](ADVANCED.md))
 1. `dev`: basic configuration using the `local` flavor
 1. `test`: used by unit tests
 1. `prod`: production configuration (basically a synonym for the `s3` flavor)
@@ -86,11 +104,12 @@ with a simple syntax: `_env:VARIABLENAME[:DEFAULT]`. Check this syntax
 in action in the example below...
 
 
-#### Example config
+## Example config
 
 ```yaml
 
 common: &common
+    standalone: true
     loglevel: info
     search_backend: "_env:SEARCH_BACKEND:"
     sqlalchemy_index_database:
@@ -123,8 +142,7 @@ test:
 
 
 
-Available configuration options
-===============================
+# Available configuration options
 
 When using the `config_sample.yml`, you can pass all options through as environment variables. See [`config_sample.yml`](config/config_sample.yml) for the mapping.
 
@@ -133,7 +151,7 @@ When using the `config_sample.yml`, you can pass all options through as environm
 1. `loglevel`: string, level of debugging. Any of python's
    [logging](http://docs.python.org/2/library/logging.html) module levels:
    `debug`, `info`, `warn`, `error` or `critical`
-1. `debug`: boolean, make the `/_ping` endpoint output more useful informations, such as library versions and host information.
+1. `debug`: boolean, make the `/_ping` endpoint output more useful information, such as library versions and host information.
 1. `storage_redirect`: Redirect resource requested if storage engine supports
    this, e.g. S3 will redirect signed URLs, this can be used to offload the
    server.
@@ -144,7 +162,7 @@ When using the `config_sample.yml`, you can pass all options through as environm
    `[Credentials]` section, set `boto_host`, `boto_port` as appropriate for the
    service you are using. Alternatively, set `boto_host` and `boto_port` in the config file.
 
-### Authentication options
+## Authentication options
 
 1. `standalone`: boolean, run the server in stand-alone mode. This means that
    the Index service on index.docker.io will not be used for anything. This
@@ -158,7 +176,7 @@ When using the `config_sample.yml`, you can pass all options through as environm
    index. You should provide your own method of authentication (such as Basic
    auth).
 
-### Search-engine options
+## Search-engine options
 
 The Docker Registry can optionally index repository information in a
 database for the `GET /v1/search` [endpoint][search-endpoint].  You
@@ -182,7 +200,10 @@ common:
   search_backend: foo.registry.index.xapian
 ```
 
-#### sqlalchemy
+In this case, the module is imported, and an instance of its `Index`
+class is used as the search backend.
+
+### sqlalchemy
 
 Use [SQLAlchemy][] as the search backend.
 
@@ -197,10 +218,16 @@ common:
   sqlalchemy_index_database: sqlite:////tmp/docker-registry.db
 ```
 
-In this case, the module is imported, and an instance of it's `Index`
-class is used as the search backend.
+On initialization, the `SQLAlchemyIndex` class checks the database
+version.  If the database doesn't exist yet (or does exist, but lacks
+a `version` table), the `SQLAlchemyIndex` creates the database and
+required tables.  To avoid several Gunicorn workers racing to create
+the database, you should launch your registry with
+[--preload][gunicorn-preload].  For example:
 
-### Mirroring Options
+    $ docker run -e GUNICORN_OPTS='[--preload]' -p 5000:5000 registry
+
+## Mirroring Options
 
 All mirror options are placed in a `mirroring` section.
 
@@ -219,7 +246,7 @@ common:
     tags_cache_ttl: 172800 # 2 days
 ```
 
-### Cache options
+## Cache options
 
 It's possible to add an LRU cache to access small files. In this case you need
 to spawn a [redis-server](http://redis.io/) configured in
@@ -227,7 +254,7 @@ to spawn a [redis-server](http://redis.io/) configured in
 shows an example to enable the LRU cache using the config directive `cache_lru`.
 
 Once this feature is enabled, all small files (tags, meta-data) will be cached
-in Redis. When using a remote storage backend (like Amazon S3), it will speeds
+in Redis. When using a remote storage backend (like Amazon S3), it will speed
 things up dramatically since it will reduce roundtrips to S3.
 
 All config settings are placed in a `cache` or `cache_lru` section.
@@ -249,17 +276,18 @@ To use and install one of these alternate storages:
 
  * `pip install docker-registry-driver-NAME`
  * in the configuration set `storage` to `NAME`
- * add any other storage dependent configuraiton option to the conf file
+ * add any other storage dependent configuration option to the conf file
  * review the storage specific documentation for additional dependency or configuration instructions.
 
- Currently, we are aware of the following storage driver:
+ Currently, we are aware of the following storage drivers:
 
+  * [azure](https://github.com/ahmetalpbalkan/docker-registry-driver-azure)
   * [elliptics](https://github.com/noxiouz/docker-registry-driver-elliptics)
   * [swift](https://github.com/bacongobbler/docker-registry-driver-swift)
   * [gcs](https://github.com/dmp42/docker-registry-driver-gcs)
   * [glance](https://github.com/dmp42/docker-registry-driver-glance)
 
-### storage: file
+### storage file
 
 1. `storage_path`: Path on the filesystem where to store data
 
@@ -282,7 +310,7 @@ Example:
 docker run -p 5000 -v /tmp/registry:/tmp/registry registry
 ```
 
-### storage: s3
+### storage s3
 AWS Simple Storage Service options
 
 1. `s3_access_key`: string, S3 access key
@@ -297,7 +325,7 @@ AWS Simple Storage Service options
 1. `boto_host`: string, host for *non*-Amazon S3-compliant object store
 1. `boto_port`: for *non*-Amazon S3-compliant object store
 1. `boto_debug`: for *non*-Amazon S3-compliant object store
-1. `boto_calling_format`: for *non*-Amazon S3-compliant object store
+1. `boto_calling_format`: string, the fully qualified class name of the boto calling format to use when accessing S3 or a *non*-Amazon S3-compliant object store
 1. `storage_path`: string, the sub "folder" where image data will be stored.
 
 Example:
@@ -311,8 +339,7 @@ prod:
   s3_secret_key: xdDowwlK7TJajV1Y7EoOZrmuPEJlHYcNP2k4j49T
 ```
 
-Your own config
-===============
+# Your own config
 
 Start from a copy of [config_sample.yml](config/config_sample.yml).
 
@@ -322,18 +349,20 @@ Then, start your registry with a mount point to expose your new configuration in
 sudo docker run -p 5000:5000 -v /home/me/myfolder:/registry-conf -e DOCKER_REGISTRY_CONFIG=/registry-conf/mysuperconfig.yml registry
 ```
 
-
-Advanced use
-============
+# Advanced use
 
 For more features and advanced options, have a look at the [advanced features documentation](ADVANCED.md) 
 
+# Drivers
 
-For developers
-==============
+For more backend drivers, please read [drivers.md](DRIVERS.md)
 
-Read [contribute](CONTRIBUTE.md)
+# For developers
+
+Read [contributing](CONTRIBUTING.md)
 
 [search-endpoint]: http://docs.docker.com/reference/api/docker-io_api/#search
 [SQLAlchemy]: http://docs.sqlalchemy.org/
 [create_engine]: http://docs.sqlalchemy.org/en/latest/core/engines.html#sqlalchemy.create_engine
+[gunicorn-preload]: http://gunicorn-docs.readthedocs.org/en/latest/settings.html#preload-app
+
